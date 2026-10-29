@@ -10,7 +10,7 @@ import numpy as np
 import yfinance as yf
 from streamlit_autorefresh import st_autorefresh
 
-st.set_page_config(page_title="AI Trading Partner V4", page_icon="📈", layout="wide")
+st.set_page_config(page_title="AI Trading Partner V5", page_icon="📈", layout="wide")
 st.title("📈 AI Trading Partner — V4")
 st.caption("NSE equity research + automatic paper exits + trade journal. No broker connection and no live orders.")
 
@@ -311,8 +311,119 @@ if st.button("Create paper trade", type="primary", disabled=(qty <= 0 or target 
             st.warning("Paper trade created for this session, but local persistence failed. Download a backup.")
         st.rerun()
 
+
 st.divider()
-st.subheader("3. Paper trade ledger")
+st.subheader("3. Controlled simulation test mode")
+st.warning(
+    "This section is an isolated test bench. It uses manually simulated prices/candles, "
+    "does not use live market data to trigger these tests, and does not add test trades to your real paper ledger or performance dashboard."
+)
+if "simulation_test_open" not in st.session_state:
+    st.session_state.simulation_test_open = None
+if "simulation_test_history" not in st.session_state:
+    st.session_state.simulation_test_history = []
+
+with st.expander("Create or run a controlled exit test", expanded=True):
+    tc1, tc2 = st.columns(2)
+    with tc1:
+        test_symbol = st.text_input("Test symbol", value="TEST.NS", key="v5_test_symbol").strip().upper() or "TEST.NS"
+        test_entry = st.number_input("Test entry price (₹)", min_value=0.01, value=101.0, step=0.5, key="v5_test_entry")
+        test_stop = st.number_input("Test stop-loss (₹)", min_value=0.01, value=100.0, step=0.5, key="v5_test_stop")
+    with tc2:
+        test_target = st.number_input("Test target (₹)", min_value=0.01, value=115.5, step=0.5, key="v5_test_target")
+        test_qty = st.number_input("Test quantity", min_value=1, max_value=100000, value=100, step=1, key="v5_test_qty")
+        test_product = st.selectbox("Test product", ["Delivery", "Intraday"], key="v5_test_product")
+
+    if st.button("Create isolated test trade", key="v5_create_test"):
+        if not (test_stop < test_entry < test_target):
+            st.error("For this long-trade test, stop-loss must be below entry and target must be above entry.")
+        elif st.session_state.simulation_test_open is not None:
+            st.error("Close or reset the current test trade before creating another.")
+        else:
+            st.session_state.simulation_test_open = {
+                "ID": len(st.session_state.simulation_test_history) + 1,
+                "Symbol": test_symbol, "Product": test_product, "Strategy": "Test only",
+                "Entry": float(test_entry), "Stop": float(test_stop), "Target": float(test_target),
+                "Qty": int(test_qty), "Status": "OPEN", "Created (UTC)": now_utc(),
+                "Exit": None, "Gross P/L": None, "Est. costs": None, "Net P/L est.": None,
+                "Exit reason": None, "Last checked bar": None
+            }
+            st.success("Isolated test trade created. It is separate from the main ledger.")
+            st.rerun()
+
+    test_trade = st.session_state.simulation_test_open
+    if test_trade is not None and test_trade.get("Status") == "OPEN":
+        st.markdown("**Current isolated test trade**")
+        st.dataframe(pd.DataFrame([test_trade]), use_container_width=True, hide_index=True)
+        st.caption("Choose a deterministic test outcome. These buttons do not wait for or depend on actual market prices.")
+        b1, b2, b3 = st.columns(3)
+        if b1.button("Simulate target hit", type="primary", key="v5_test_target_btn"):
+            close_trade(test_trade, float(test_trade["Target"]), "SIM TEST: Target hit")
+            st.session_state.simulation_test_history.append(test_trade.copy())
+            st.session_state.simulation_test_open = None
+            st.rerun()
+        if b2.button("Simulate stop-loss hit", key="v5_test_stop_btn"):
+            close_trade(test_trade, float(test_trade["Stop"]), "SIM TEST: Stop-loss hit")
+            st.session_state.simulation_test_history.append(test_trade.copy())
+            st.session_state.simulation_test_open = None
+            st.rerun()
+        if b3.button("Reset test trade", key="v5_test_reset_btn"):
+            st.session_state.simulation_test_open = None
+            st.rerun()
+
+        st.markdown("**Custom simulated exit price**")
+        custom_exit = st.number_input("Custom exit price (₹)", min_value=0.01, value=float(test_trade["Entry"]), step=0.5, key="v5_custom_exit")
+        if st.button("Close test at custom price", key="v5_custom_close"):
+            reason = "SIM TEST: Custom price"
+            close_trade(test_trade, float(custom_exit), reason)
+            st.session_state.simulation_test_history.append(test_trade.copy())
+            st.session_state.simulation_test_open = None
+            st.rerun()
+
+        st.markdown("**Simulate one candle's high and low**")
+        cc1, cc2 = st.columns(2)
+        with cc1:
+            candle_low = st.number_input("Simulated candle LOW (₹)", min_value=0.01, value=float(test_trade["Stop"]), step=0.5, key="v5_candle_low")
+        with cc2:
+            candle_high = st.number_input("Simulated candle HIGH (₹)", min_value=0.01, value=float(test_trade["Target"]), step=0.5, key="v5_candle_high")
+        if st.button("Evaluate simulated candle", key="v5_eval_candle"):
+            if candle_low > candle_high:
+                st.error("Candle low must be less than or equal to candle high.")
+            elif candle_low <= float(test_trade["Stop"]) and candle_high >= float(test_trade["Target"]):
+                close_trade(test_trade, float(test_trade["Stop"]), "SIM TEST: Both levels touched; stop first")
+                st.session_state.simulation_test_history.append(test_trade.copy())
+                st.session_state.simulation_test_open = None
+                st.rerun()
+            elif candle_low <= float(test_trade["Stop"]):
+                close_trade(test_trade, float(test_trade["Stop"]), "SIM TEST: Stop-loss touched")
+                st.session_state.simulation_test_history.append(test_trade.copy())
+                st.session_state.simulation_test_open = None
+                st.rerun()
+            elif candle_high >= float(test_trade["Target"]):
+                close_trade(test_trade, float(test_trade["Target"]), "SIM TEST: Target touched")
+                st.session_state.simulation_test_history.append(test_trade.copy())
+                st.session_state.simulation_test_open = None
+                st.rerun()
+            else:
+                st.info("Neither stop-loss nor target was touched. Test trade remains open.")
+
+    if st.session_state.simulation_test_history:
+        st.markdown("**Isolated simulation test results**")
+        test_results = pd.DataFrame(st.session_state.simulation_test_history)
+        st.dataframe(test_results, use_container_width=True, hide_index=True)
+        st.download_button(
+            "Download isolated test results (CSV)",
+            test_results.to_csv(index=False).encode("utf-8"),
+            "ai_trading_v5_simulation_tests.csv", "text/csv", key="v5_download_tests"
+        )
+        if st.button("Clear isolated test history", key="v5_clear_test_history"):
+            st.session_state.simulation_test_history = []
+            st.session_state.simulation_test_open = None
+            st.rerun()
+
+
+st.divider()
+st.subheader("4. Paper trade ledger")
 st.caption("The app saves a JSON ledger on its server and supports backup/restore. Streamlit-hosted local files are not guaranteed to survive redeployments or server replacement. Download backups regularly. V3 trades without a Strategy field are classified automatically for reporting.")
 open_trades = [t for t in st.session_state.paper_trades if t.get("Status") == "OPEN"]
 if open_trades:
@@ -367,7 +478,7 @@ if uploaded_ledger is not None and st.button("Restore uploaded ledger"):
         st.error(f"Could not restore file: {exc}")
 
 st.divider()
-st.subheader("4. Performance & risk dashboard")
+st.subheader("5. Performance & risk dashboard")
 st.caption("Metrics use closed paper trades and estimated costs. They are descriptive, not evidence of future profitability.")
 all_trades = pd.DataFrame(st.session_state.paper_trades)
 if all_trades.empty:
@@ -438,7 +549,7 @@ else:
         st.info("No closed trades yet. Close a paper trade to see win rate, P/L, profit factor, and drawdown.")
 
 st.divider()
-st.subheader("5. Risk rules and limitations")
+st.subheader("6. Risk rules and limitations")
 st.markdown("""
 - Default risk budget: 0.5% of ₹20,000 = ₹100 planned gross stop risk.
 - Default daily loss limit: 2% = ₹400. V4 blocks creating new paper trades after closed-trade net losses reach this limit; open/unrealized P/L is not included, and the date basis is UTC.
@@ -450,4 +561,4 @@ st.markdown("""
 - Cost estimates are illustrative, not an official Groww tariff calculator. Actual charges and slippage may differ.
 - Server-side JSON persistence is convenient but not durable across every Streamlit Cloud redeployment/replacement. Download CSV/JSON backups.
 """)
-st.caption("Version 4 • Research and paper trading only • No live trading API • Not investment advice")
+st.caption("Version 5 • Research and paper trading only • No live trading API • Not investment advice")
