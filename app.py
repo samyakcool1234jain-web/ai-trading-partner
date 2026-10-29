@@ -11,7 +11,7 @@ import yfinance as yf
 from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(page_title="AI Trading Partner V5", page_icon="📈", layout="wide")
-st.title("📈 AI Trading Partner — V4")
+st.title("📈 AI Trading Partner — V5.1")
 st.caption("NSE equity research + automatic paper exits + trade journal. No broker connection and no live orders.")
 
 st.warning(
@@ -322,6 +322,18 @@ if "simulation_test_open" not in st.session_state:
     st.session_state.simulation_test_open = None
 if "simulation_test_history" not in st.session_state:
     st.session_state.simulation_test_history = []
+if "simulation_test_last_result" not in st.session_state:
+    st.session_state.simulation_test_last_result = None
+
+if st.session_state.simulation_test_last_result is not None:
+    last_result = st.session_state.simulation_test_last_result
+    st.success(
+        f"Last simulation closed automatically: {last_result.get('Exit reason')} | "
+        f"Exit ₹{float(last_result.get('Exit') or 0):.2f} | "
+        f"Gross P/L ₹{float(last_result.get('Gross P/L') or 0):.2f} | "
+        f"Net P/L est. ₹{float(last_result.get('Net P/L est.') or 0):.2f}"
+    )
+    st.caption("The test trade is closed. It appears in the isolated simulation results below, not in your main paper ledger.")
 
 with st.expander("Create or run a controlled exit test", expanded=True):
     tc1, tc2 = st.columns(2)
@@ -360,11 +372,13 @@ with st.expander("Create or run a controlled exit test", expanded=True):
         if b1.button("Simulate target hit", type="primary", key="v5_test_target_btn"):
             close_trade(test_trade, float(test_trade["Target"]), "SIM TEST: Target hit")
             st.session_state.simulation_test_history.append(test_trade.copy())
+            st.session_state.simulation_test_last_result = test_trade.copy()
             st.session_state.simulation_test_open = None
             st.rerun()
         if b2.button("Simulate stop-loss hit", key="v5_test_stop_btn"):
             close_trade(test_trade, float(test_trade["Stop"]), "SIM TEST: Stop-loss hit")
             st.session_state.simulation_test_history.append(test_trade.copy())
+            st.session_state.simulation_test_last_result = test_trade.copy()
             st.session_state.simulation_test_open = None
             st.rerun()
         if b3.button("Reset test trade", key="v5_test_reset_btn"):
@@ -377,6 +391,7 @@ with st.expander("Create or run a controlled exit test", expanded=True):
             reason = "SIM TEST: Custom price"
             close_trade(test_trade, float(custom_exit), reason)
             st.session_state.simulation_test_history.append(test_trade.copy())
+            st.session_state.simulation_test_last_result = test_trade.copy()
             st.session_state.simulation_test_open = None
             st.rerun()
 
@@ -392,16 +407,19 @@ with st.expander("Create or run a controlled exit test", expanded=True):
             elif candle_low <= float(test_trade["Stop"]) and candle_high >= float(test_trade["Target"]):
                 close_trade(test_trade, float(test_trade["Stop"]), "SIM TEST: Both levels touched; stop first")
                 st.session_state.simulation_test_history.append(test_trade.copy())
+                st.session_state.simulation_test_last_result = test_trade.copy()
                 st.session_state.simulation_test_open = None
                 st.rerun()
             elif candle_low <= float(test_trade["Stop"]):
                 close_trade(test_trade, float(test_trade["Stop"]), "SIM TEST: Stop-loss touched")
                 st.session_state.simulation_test_history.append(test_trade.copy())
+                st.session_state.simulation_test_last_result = test_trade.copy()
                 st.session_state.simulation_test_open = None
                 st.rerun()
             elif candle_high >= float(test_trade["Target"]):
                 close_trade(test_trade, float(test_trade["Target"]), "SIM TEST: Target touched")
                 st.session_state.simulation_test_history.append(test_trade.copy())
+                st.session_state.simulation_test_last_result = test_trade.copy()
                 st.session_state.simulation_test_open = None
                 st.rerun()
             else:
@@ -419,6 +437,7 @@ with st.expander("Create or run a controlled exit test", expanded=True):
         if st.button("Clear isolated test history", key="v5_clear_test_history"):
             st.session_state.simulation_test_history = []
             st.session_state.simulation_test_open = None
+            st.session_state.simulation_test_last_result = None
             st.rerun()
 
 

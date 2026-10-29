@@ -1,30 +1,27 @@
-# AI Trading Partner V5 (Paper Trading Only)
+# AI Trading Partner V5.1 (Paper Trading Only)
 
-## What's new
-- Adds a controlled, isolated simulation test bench to test target hits, stop-loss hits, custom exit prices, and candle high/low behavior.
-- Simulation test trades are kept separate from the main paper ledger and performance dashboard.
-- Existing V4 features remain: scanner, planner, automatic paper exits, risk dashboard, ledger export/restore.
+## Fix in V5.1
+- Simulation buttons close the isolated test trade immediately.
+- A clear status banner shows the most recent simulated exit, exit reason, exit price, gross P/L, and estimated net P/L after the app reruns.
+- Closed test trades appear in **Isolated simulation test results**, not the main paper ledger. This separation is intentional.
 
-## Android / Streamlit deployment
-1. Download and extract the ZIP.
-2. In your GitHub repository, replace `app.py` and `requirements.txt` with these files.
-3. Commit the changes and wait for Streamlit to redeploy.
-4. Refresh the app and find **Controlled simulation test mode** above the main paper-trade ledger.
+## Install from Android / GitHub
+1. Download and extract this ZIP.
+2. In your GitHub repository, replace the existing root `app.py` with this `app.py` and commit it.
+3. Replace `requirements.txt` only if needed; V5.1 uses the same dependencies as V5.
+4. Wait for Streamlit to redeploy, then refresh the app.
+5. Confirm the title says **AI Trading Partner — V5.1**.
 
-## Test the stop-loss
-1. Create an isolated test trade with entry 101, stop 100, target 115.5, quantity 100.
+## Test stop-loss
+1. Under **Controlled simulation test mode**, create a test trade with entry 101, stop 100, target 115.5, quantity 100.
 2. Tap **Simulate stop-loss hit**.
-3. Expected result: exit 100, gross P/L -100 before estimated costs, exit reason `SIM TEST: Stop-loss hit`.
+3. The test trade should close immediately. The status banner should show exit reason `SIM TEST: Stop-loss hit`, exit ₹100, gross P/L -₹100 (before estimated costs).
+4. Check **Isolated simulation test results** for the closed record.
 
-## Test the target
-Create a new test trade and tap **Simulate target hit**. Expected result: exit 115.5 and gross P/L +1450 before estimated costs.
+## Test target
+Create another isolated test trade and tap **Simulate target hit**. Expected exit ₹115.50 and gross P/L +₹1,450 before estimated costs.
 
-## Test a candle touching both levels
-Create a test trade, set simulated candle low at/below the stop and high at/above the target, then tap **Evaluate simulated candle**. The test bench uses the conservative assumption that stop-loss is hit first. A single candle does not reveal the true intrabar sequence.
-
-## Important limitations
-- This is a research prototype, not investment advice. No Groww connection, broker credentials, or live orders.
-- Controlled simulation tests are not live market tests and do not modify the main ledger. Their session-only history may reset if the app restarts; download the test CSV if needed.
-- Market-driven auto exits still require the app to be open and refreshing and depend on Yahoo Finance data availability.
-- Server-side main ledger files are not guaranteed to survive all hosting redeployments. Download CSV/JSON backups regularly.
-- Costs are illustrative and may differ from actual brokerage, taxes, fees, and slippage.
+## Notes
+- Controlled tests use simulated prices and do not alter the main paper ledger or its performance metrics.
+- Market-data paper exits require the app to be open and refreshing and depend on data availability. No Groww connection or live orders are included.
+- Download backups regularly; local files on hosted Streamlit instances are not guaranteed to survive all redeployments.
