@@ -10,8 +10,8 @@ import numpy as np
 import yfinance as yf
 from streamlit_autorefresh import st_autorefresh
 
-st.set_page_config(page_title="AI Trading Partner V3", page_icon="📈", layout="wide")
-st.title("📈 AI Trading Partner — V3")
+st.set_page_config(page_title="AI Trading Partner V4", page_icon="📈", layout="wide")
+st.title("📈 AI Trading Partner — V4")
 st.caption("NSE equity research + automatic paper exits + trade journal. No broker connection and no live orders.")
 
 st.warning(
@@ -22,7 +22,7 @@ st.warning(
 
 DEFAULT_TICKERS = "RELIANCE.NS,TCS.NS,INFY.NS,HDFCBANK.NS,ICICIBANK.NS,SBIN.NS,LT.NS,BHARTIARTL.NS,ITC.NS,TATAMOTORS.NS"
 DATA_DIR = Path(__file__).parent
-LEDGER_FILE = DATA_DIR / "paper_trades_v3.json"
+LEDGER_FILE = DATA_DIR / "paper_trades_v3.json"  # Reuse V3 ledger to preserve existing paper trades
 
 def now_utc():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -264,6 +264,7 @@ with c1:
     target = st.number_input("Target price (₹)", min_value=0.01, value=104.0, step=0.5)
 with c2:
     product = st.selectbox("Paper product type", ["Delivery", "Intraday"])
+    strategy = st.selectbox("Strategy classification", ["Swing", "Intraday"], help="Used to compare performance by intended holding style.")
     risk_rupees = capital * risk_pct / 100
     if stop < entry:
         stop_distance = entry - stop
@@ -285,12 +286,21 @@ with c2:
 
 if st.button("Create paper trade", type="primary", disabled=(qty <= 0 or target <= entry or stop >= entry)):
     open_count = sum(1 for t in st.session_state.paper_trades if t.get("Status") == "OPEN")
-    if open_count >= max_positions:
+    closed_today = [
+        t for t in st.session_state.paper_trades
+        if t.get("Status") == "CLOSED"
+        and str(t.get("Closed (UTC)", "")).startswith(datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    ]
+    daily_realized_net = sum(float(t.get("Net P/L est.") or 0) for t in closed_today)
+    daily_limit_amount = capital * daily_loss_pct / 100
+    if daily_realized_net <= -daily_limit_amount:
+        st.error(f"Daily paper-trading loss limit reached (₹{daily_limit_amount:,.2f}). New paper trades are blocked for today.")
+    elif open_count >= max_positions:
         st.error(f"Maximum open paper trades reached ({max_positions}). Close a paper trade first.")
     else:
         next_id = max([int(t.get("ID", 0)) for t in st.session_state.paper_trades] + [0]) + 1
         st.session_state.paper_trades.append({
-            "ID": next_id, "Symbol": selected_symbol, "Product": product, "Entry": float(entry),
+            "ID": next_id, "Symbol": selected_symbol, "Product": product, "Strategy": strategy, "Entry": float(entry),
             "Stop": float(stop), "Target": float(target), "Qty": int(qty), "Status": "OPEN",
             "Created (UTC)": now_utc(), "Exit": None, "Gross P/L": None, "Est. costs": None,
             "Net P/L est.": None, "Exit reason": None, "Last checked bar": None
@@ -303,7 +313,7 @@ if st.button("Create paper trade", type="primary", disabled=(qty <= 0 or target 
 
 st.divider()
 st.subheader("3. Paper trade ledger")
-st.caption("The app saves a JSON ledger on its server and supports backup/restore. Streamlit-hosted local files are not guaranteed to survive redeployments or server replacement. Download backups regularly.")
+st.caption("The app saves a JSON ledger on its server and supports backup/restore. Streamlit-hosted local files are not guaranteed to survive redeployments or server replacement. Download backups regularly. V3 trades without a Strategy field are classified automatically for reporting.")
 open_trades = [t for t in st.session_state.paper_trades if t.get("Status") == "OPEN"]
 if open_trades:
     st.dataframe(pd.DataFrame(open_trades), use_container_width=True, hide_index=True)
@@ -331,11 +341,11 @@ if st.session_state.paper_trades:
         wins = (pd.to_numeric(closed["Net P/L est."], errors="coerce") > 0).sum()
         st.metric("Closed trades — estimated net P/L", f"₹{total_net:,.2f}")
         st.metric("Closed-trade win rate", f"{wins / len(closed) * 100:.1f}%")
-    st.download_button("Download paper ledger (CSV)", ledger.to_csv(index=False).encode("utf-8"), "paper_trade_ledger_v3.csv", "text/csv")
-    st.download_button("Download paper ledger (JSON backup)", json.dumps(st.session_state.paper_trades, indent=2).encode("utf-8"), "paper_trade_ledger_v3.json", "application/json")
+    st.download_button("Download paper ledger (CSV)", ledger.to_csv(index=False).encode("utf-8"), "paper_trade_ledger_v4.csv", "text/csv")
+    st.download_button("Download paper ledger (JSON backup)", json.dumps(st.session_state.paper_trades, indent=2).encode("utf-8"), "paper_trade_ledger_v4.json", "application/json")
 
 st.subheader("Restore a saved ledger")
-uploaded_ledger = st.file_uploader("Upload a previous V3 JSON or CSV backup", type=["json", "csv"])
+uploaded_ledger = st.file_uploader("Upload a previous V3 or V4 JSON/CSV backup", type=["json", "csv"])
 if uploaded_ledger is not None and st.button("Restore uploaded ledger"):
     try:
         if uploaded_ledger.name.lower().endswith(".json"):
@@ -357,10 +367,81 @@ if uploaded_ledger is not None and st.button("Restore uploaded ledger"):
         st.error(f"Could not restore file: {exc}")
 
 st.divider()
-st.subheader("4. Risk rules and limitations")
+st.subheader("4. Performance & risk dashboard")
+st.caption("Metrics use closed paper trades and estimated costs. They are descriptive, not evidence of future profitability.")
+all_trades = pd.DataFrame(st.session_state.paper_trades)
+if all_trades.empty:
+    st.info("Create and close paper trades to populate performance metrics.")
+else:
+    if "Strategy" not in all_trades.columns:
+        all_trades["Strategy"] = np.where(all_trades.get("Product", pd.Series(index=all_trades.index, dtype=str)).eq("Intraday"), "Intraday", "Swing")
+    else:
+        product_fallback = np.where(all_trades.get("Product", pd.Series(index=all_trades.index, dtype=str)).eq("Intraday"), "Intraday", "Swing")
+        all_trades["Strategy"] = all_trades["Strategy"].fillna(pd.Series(product_fallback, index=all_trades.index))
+    closed_all = all_trades[all_trades["Status"].eq("CLOSED")].copy()
+    if not closed_all.empty:
+        closed_all["Net P/L est."] = pd.to_numeric(closed_all["Net P/L est."], errors="coerce").fillna(0.0)
+        closed_all["Gross P/L"] = pd.to_numeric(closed_all["Gross P/L"], errors="coerce").fillna(0.0)
+        closed_all["Est. costs"] = pd.to_numeric(closed_all["Est. costs"], errors="coerce").fillna(0.0)
+        net_values = closed_all["Net P/L est."]
+        wins = net_values[net_values > 0]
+        losses = net_values[net_values < 0]
+        win_rate = (net_values > 0).mean() * 100
+        avg_win = wins.mean() if len(wins) else 0.0
+        avg_loss = losses.mean() if len(losses) else 0.0
+        profit_factor = wins.sum() / abs(losses.sum()) if len(losses) and abs(losses.sum()) > 0 else (float("inf") if len(wins) else 0.0)
+        closed_all["Close date"] = closed_all["Closed (UTC)"].astype(str).str.slice(0, 10)
+        closed_all = closed_all.sort_values("Closed (UTC)")
+        closed_all["Cumulative net P/L"] = closed_all["Net P/L est."].cumsum()
+        closed_all["Equity (illustrative)"] = float(capital) + closed_all["Cumulative net P/L"]
+        closed_all["Running peak"] = closed_all["Equity (illustrative)"].cummax()
+        closed_all["Drawdown (₹)"] = closed_all["Equity (illustrative)"] - closed_all["Running peak"]
+        max_drawdown = abs(float(closed_all["Drawdown (₹)"].min())) if len(closed_all) else 0.0
+        today_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        daily_closed = closed_all[closed_all["Close date"] == today_utc]
+        daily_net = float(daily_closed["Net P/L est."].sum())
+        daily_limit_amount = float(capital) * daily_loss_pct / 100
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Total net P/L (est.)", f"₹{net_values.sum():,.2f}")
+        k2.metric("Win rate", f"{win_rate:.1f}%")
+        k3.metric("Profit factor", "∞" if profit_factor == float("inf") else f"{profit_factor:.2f}")
+        k4.metric("Max drawdown", f"₹{max_drawdown:,.2f}")
+        k5, k6, k7, k8 = st.columns(4)
+        k5.metric("Closed trades", f"{len(closed_all)}")
+        k6.metric("Average winning trade", f"₹{avg_win:,.2f}")
+        k7.metric("Average losing trade", f"₹{avg_loss:,.2f}")
+        k8.metric("Estimated costs total", f"₹{closed_all['Est. costs'].sum():,.2f}")
+        st.markdown("**Intraday vs swing results**")
+        by_strategy = closed_all.groupby("Strategy", dropna=False).agg(
+            Trades=("ID", "count"),
+            Net_PL=("Net P/L est.", "sum"),
+            Win_rate=("Net P/L est.", lambda x: (x > 0).mean() * 100),
+            Avg_net_PL=("Net P/L est.", "mean")
+        ).reset_index()
+        by_strategy = by_strategy.rename(columns={"Strategy":"Strategy", "Net_PL":"Net P/L (₹)", "Win_rate":"Win rate (%)", "Avg_net_PL":"Average net P/L (₹)"})
+        st.dataframe(by_strategy.round(2), use_container_width=True, hide_index=True)
+        st.markdown("**Cumulative net P/L after estimated costs**")
+        chart_df = closed_all[["Closed (UTC)", "Cumulative net P/L"]].copy().set_index("Closed (UTC)")
+        st.line_chart(chart_df)
+        st.markdown("**Daily loss-limit monitor (UTC date)**")
+        daily_col1, daily_col2 = st.columns(2)
+        daily_col1.metric("Today's closed-trade net P/L", f"₹{daily_net:,.2f}")
+        daily_col2.metric("Daily loss threshold", f"−₹{daily_limit_amount:,.2f}")
+        if daily_net <= -daily_limit_amount:
+            st.error("Daily realized loss limit reached. New paper trades will be blocked.")
+        elif daily_net < 0:
+            st.warning(f"Daily realized loss is ₹{abs(daily_net):,.2f}; remaining room to limit: ₹{daily_limit_amount + daily_net:,.2f}.")
+        else:
+            st.success(f"Daily realized loss limit not reached. Current realized P/L: ₹{daily_net:,.2f}.")
+        st.caption("Daily loss calculations use UTC close dates, not India-local calendar dates. Open/unrealized losses are not included in this daily lockout.")
+    else:
+        st.info("No closed trades yet. Close a paper trade to see win rate, P/L, profit factor, and drawdown.")
+
+st.divider()
+st.subheader("5. Risk rules and limitations")
 st.markdown("""
 - Default risk budget: 0.5% of ₹20,000 = ₹100 planned gross stop risk.
-- Default daily loss guide: 2% = ₹400; this prototype does not enforce a hard daily lockout.
+- Default daily loss limit: 2% = ₹400. V4 blocks creating new paper trades after closed-trade net losses reach this limit; open/unrealized P/L is not included, and the date basis is UTC.
 - Maximum open paper trades defaults to 3.
 - No Groww connection, broker credentials, real orders, leverage, or options.
 - Auto exits use Yahoo Finance one-minute candle highs/lows, not a guaranteed real-time feed. Data can be delayed, missing, or arrive after a move.
@@ -369,4 +450,4 @@ st.markdown("""
 - Cost estimates are illustrative, not an official Groww tariff calculator. Actual charges and slippage may differ.
 - Server-side JSON persistence is convenient but not durable across every Streamlit Cloud redeployment/replacement. Download CSV/JSON backups.
 """)
-st.caption("Version 3 • Research and paper trading only • No live trading API • Not investment advice")
+st.caption("Version 4 • Research and paper trading only • No live trading API • Not investment advice")
