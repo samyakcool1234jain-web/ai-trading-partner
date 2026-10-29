@@ -1,42 +1,25 @@
-# AI Trading Partner V1 — Android-first prototype
+# AI Trading Partner V2 (Android-friendly deployment)
 
-This is a research-only stock scanner. It does **not** place orders or provide reliable real-time trading data.
+A Streamlit research dashboard for Indian NSE equities with daily swing and 5-minute intraday research views, rule-based indicators, a risk-based quantity planner, and a session-only paper-trade ledger.
 
-## Easiest route from Android
+## Important limitations
+- No broker connection and no live orders.
+- Yahoo Finance data may be delayed, incomplete, unavailable, or unsuitable for execution decisions.
+- Signals are simple rule-based indicators, not predictions.
+- Paper ledger is stored in Streamlit session state and may reset after server sleep/restart or browser session changes. Download CSVs if you need a record.
+- Charge calculations are rough illustrative estimates only. They are not an official Groww tariff calculator; verify current brokerage, statutory charges, taxes, and slippage before relying on any estimate.
+- The app is long-only for the trade planner and does not support options, leverage, or automatic stop/target execution.
 
-1. Create an account on a cloud coding/deployment service that supports Python and Streamlit.
-2. Upload `app.py` and `requirements.txt` into a new project/repository.
-3. Set the run command to `streamlit run app.py`.
-4. Open the generated web app URL in Chrome on Android.
-5. Test with the default symbols and review the warnings.
+## Deploy from an Android phone
+1. Download and extract the ZIP on your phone.
+2. Open your GitHub repository `ai-trading-partner`.
+3. Open `app.py`, tap the pencil/edit option, replace its full contents with this `app.py`, then commit. Alternatively use **Add file → Upload files** and upload `app.py` and `requirements.txt`, accepting the replacement prompt.
+4. Upload/replace `requirements.txt` too. You may also replace `README.md`.
+5. Open https://share.streamlit.io/ and select your existing app. It should redeploy automatically after the GitHub commit. If not, use the app menu to reboot/redeploy.
+6. Wait for the app to finish restarting, then refresh the app URL.
 
-A GitHub repository plus Streamlit Community Cloud is one possible deployment route; service availability, limits, and deployment requirements can change.
+## Local run
+`pip install -r requirements.txt`
+`streamlit run app.py`
 
-## Run locally (for reference)
-
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
-
-## Included
-
-- Daily-data swing research and recent 5-minute intraday research views
-- EMA20/EMA50, RSI, relative volume, simple rule-based signal labels
-- Illustrative stop/target reference levels
-- Basic fundamentals and headlines where the data source provides them
-- CSV export
-
-## Not included
-
-- A validated backtester
-- Real-time or exchange-licensed market data
-- Persistent paper-trade ledger
-- Groww API integration or order placement
-- Robust corporate-action/news risk controls
-
-## Safety
-
-- Signals are illustrative rules, not a promise of profitability.
-- Yahoo Finance data may be delayed, incomplete, or unsuitable for trading.
-- Do not connect real-money trading until backtesting, forward testing, risk controls, broker/API requirements, and applicable Indian regulations have been reviewed.
+Never place broker credentials, API tokens, or personal account information in a public repository.
