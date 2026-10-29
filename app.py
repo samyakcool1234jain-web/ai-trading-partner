@@ -177,13 +177,29 @@ if auto_monitor:
         bars = fetch_monitor_bars(str(trade.get("Symbol", "")))
         if bars.empty:
             continue
-        for idx, bar in bars.tail(10).iterrows():
+        # Skip the newest candle because it may still be forming. Only evaluate
+        # completed candles whose start time is strictly after trade creation.
+        completed_bars = bars.iloc[:-1].tail(10)
+        for idx, bar in completed_bars.iterrows():
             try:
                 bar_time = pd.Timestamp(idx)
                 if bar_time.tzinfo is None:
                     bar_time = bar_time.tz_localize("UTC")
                 else:
                     bar_time = bar_time.tz_convert("UTC")
+
+                created_value = trade.get("Created (UTC)")
+                if not created_value:
+                    continue
+                created_time = pd.Timestamp(str(created_value).replace(" UTC", ""))
+                if created_time.tzinfo is None:
+                    created_time = created_time.tz_localize("UTC")
+                else:
+                    created_time = created_time.tz_convert("UTC")
+                # Prevent old candles from closing a newly created paper trade.
+                if bar_time <= created_time:
+                    continue
+
                 bar_key = bar_time.strftime("%Y-%m-%d %H:%M:%S UTC")
                 last_checked = trade.get("Last checked bar")
                 if last_checked:
@@ -285,31 +301,44 @@ with c2:
         st.warning("Target should be above entry.")
 
 if st.button("Create paper trade", type="primary", disabled=(qty <= 0 or target <= entry or stop >= entry)):
-    open_count = sum(1 for t in st.session_state.paper_trades if t.get("Status") == "OPEN")
-    closed_today = [
-        t for t in st.session_state.paper_trades
-        if t.get("Status") == "CLOSED"
-        and str(t.get("Closed (UTC)", "")).startswith(datetime.now(timezone.utc).strftime("%Y-%m-%d"))
-    ]
-    daily_realized_net = sum(float(t.get("Net P/L est.") or 0) for t in closed_today)
-    daily_limit_amount = capital * daily_loss_pct / 100
-    if daily_realized_net <= -daily_limit_amount:
-        st.error(f"Daily paper-trading loss limit reached (₹{daily_limit_amount:,.2f}). New paper trades are blocked for today.")
-    elif open_count >= max_positions:
-        st.error(f"Maximum open paper trades reached ({max_positions}). Close a paper trade first.")
+    # A paper trade represents an assumed fill now. Do not create it if the
+    # latest available price is already outside its planned stop/target range.
+    latest_bars = fetch_monitor_bars(selected_symbol)
+    latest_price = float(latest_bars["Close"].dropna().iloc[-1]) if not latest_bars.empty and not latest_bars["Close"].dropna().empty else None
+    if latest_price is not None and not (stop < latest_price < target):
+        st.error(
+            f"Paper trade not created: latest available {selected_symbol} price is ₹{latest_price:.2f}, "
+            f"outside your stop/target range (₹{stop:.2f}–₹{target:.2f}). Update entry, stop-loss, and target "
+            "to match the current market, then try again."
+        )
     else:
-        next_id = max([int(t.get("ID", 0)) for t in st.session_state.paper_trades] + [0]) + 1
-        st.session_state.paper_trades.append({
-            "ID": next_id, "Symbol": selected_symbol, "Product": product, "Strategy": strategy, "Entry": float(entry),
-            "Stop": float(stop), "Target": float(target), "Qty": int(qty), "Status": "OPEN",
-            "Created (UTC)": now_utc(), "Exit": None, "Gross P/L": None, "Est. costs": None,
-            "Net P/L est.": None, "Exit reason": None, "Last checked bar": None
-        })
-        if save_ledger(st.session_state.paper_trades):
-            st.success("Paper trade created and saved to the app instance. No real order was sent.")
+        if latest_price is None:
+            st.warning("Latest market price is unavailable. Trade will be simulated using future available candles only.")
+        open_count = sum(1 for t in st.session_state.paper_trades if t.get("Status") == "OPEN")
+        closed_today = [
+            t for t in st.session_state.paper_trades
+            if t.get("Status") == "CLOSED"
+            and str(t.get("Closed (UTC)", "")).startswith(datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+        ]
+        daily_realized_net = sum(float(t.get("Net P/L est.") or 0) for t in closed_today)
+        daily_limit_amount = capital * daily_loss_pct / 100
+        if daily_realized_net <= -daily_limit_amount:
+            st.error(f"Daily paper-trading loss limit reached (₹{daily_limit_amount:,.2f}). New paper trades are blocked for today.")
+        elif open_count >= max_positions:
+            st.error(f"Maximum open paper trades reached ({max_positions}). Close a paper trade first.")
         else:
-            st.warning("Paper trade created for this session, but local persistence failed. Download a backup.")
-        st.rerun()
+            next_id = max([int(t.get("ID", 0)) for t in st.session_state.paper_trades] + [0]) + 1
+            st.session_state.paper_trades.append({
+                "ID": next_id, "Symbol": selected_symbol, "Product": product, "Strategy": strategy, "Entry": float(entry),
+                "Stop": float(stop), "Target": float(target), "Qty": int(qty), "Status": "OPEN",
+                "Created (UTC)": now_utc(), "Exit": None, "Gross P/L": None, "Est. costs": None,
+                "Net P/L est.": None, "Exit reason": None, "Last checked bar": None
+            })
+            if save_ledger(st.session_state.paper_trades):
+                st.success("Paper trade created and saved to the app instance. No real order was sent.")
+            else:
+                st.warning("Paper trade created for this session, but local persistence failed. Download a backup.")
+            st.rerun()
 
 
 st.divider()
